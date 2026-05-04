@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "polymarket-inspector"
+version = "0.1.0"
+description = "CLI and web dashboard for inspecting Polymarket wallets and trade history through public endpoints"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Local Workspace" }]
+dependencies = ["Flask>=3.1,<4.0"]
+
+[project.scripts]
+polymarket-inspector = "polymarket_inspector.cli:main"
+

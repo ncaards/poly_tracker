@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Polymarket wallet analytics</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --bg: #08111f;
+            --panel: #101b2d;
+            --panel-soft: #14233a;
+            --border: #233856;
+            --text: #e7edf7;
+            --muted: #9eb1cc;
+            --good: #22c55e;
+            --bad: #f87171;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Inter, Segoe UI, Arial, sans-serif;
+            background: linear-gradient(180deg, #07101c, #0c1626 25%, #08111f 100%);
+            color: var(--text);
+        }
+        .container {
+            max-width: 1460px;
+            margin: 0 auto;
+            padding: 28px 18px 48px;
+        }
+        h1, h2, h3 { margin: 0; }
+        p { color: var(--muted); line-height: 1.5; }
+        .panel {
+            background: rgba(16, 27, 45, 0.92);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 10px 26px rgba(0, 0, 0, 0.2);
+        }
+        .hero { margin-bottom: 16px; }
+        .search-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-top: 14px;
+        }
+        input, select, button {
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: #091424;
+            color: var(--text);
+            padding: 12px 14px;
+            font-size: 14px;
+        }
+        input { flex: 1 1 520px; }
+        button {
+            cursor: pointer;
+            background: linear-gradient(135deg, #0284c7, #38bdf8);
+            color: #04111f;
+            font-weight: 700;
+            min-width: 150px;
+        }
+        button:disabled { opacity: 0.65; cursor: progress; }
+        .status { min-height: 22px; margin-top: 8px; color: var(--muted); }
+        .cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+        .card {
+            background: var(--panel-soft);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 10px;
+        }
+        .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; }
+        .card .value { margin-top: 6px; font-size: 21px; font-weight: 700; }
+        .card .sub { color: var(--muted); font-size: 11px; margin-top: 4px; }
+        .grid {
+            display: grid;
+            grid-template-columns: 1.2fr 1fr;
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .chart-wrap { height: 310px; position: relative; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        th, td {
+            padding: 8px 6px;
+            border-bottom: 1px solid rgba(35, 56, 86, 0.75);
+            text-align: left;
+            vertical-align: top;
+        }
+        th {
+            color: var(--muted);
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+        .good { color: var(--good); }
+        .bad { color: var(--bad); }
+        .warnings { margin-top: 10px; padding-left: 18px; color: var(--muted); }
+        .footnote { margin-top: 12px; color: var(--muted); font-size: 12px; }
+        .hidden { display: none; }
+        .ops-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .ops-controls label { display: inline-flex; gap: 6px; align-items: center; }
+        @media (max-width: 1000px) {
+            .grid, .grid-3 { grid-template-columns: 1fr; }
+            .chart-wrap { height: 280px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <section class="hero panel">
+        <h1>Polymarket wallet analytics</h1>
+        <p>
+            Analyze all API-available public trades for any wallet: category mix, buy/sell odds by Yes/No,
+            PnL timeline, hit/miss stats, hold-to-close behavior, Sharpe estimate, and full operation log.
+            <strong>Note:</strong> Polymarket's public API returns at most ~4,000 trades per wallet (offset hard-cap).
+            <em>All available</em> fetches everything the API will return.
+        </p>
+        <div class="search-row">
+            <input id="walletInput" value="0x594edb9112f526fa6a80b8f858a6379c8a2c1c11" placeholder="0x... wallet address">
+            <label for="limitSelect">Trades:</label>
+            <select id="limitSelect">
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+                <option value="2000">2000</option>
+                <option value="all" selected>All available (~4k max)</option>
+            </select>
+            <button id="analyzeButton">Analyze wallet</button>
+        </div>
+        <div id="status" class="status">Ready.</div>
+    </section>
+
+    <section id="results" class="hidden">
+        <div id="summaryCards" class="cards"></div>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>Estimated realized / settled PnL over time</h2>
+                <p id="timelineCaption"></p>
+                <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+            </div>
+            <div class="panel">
+                <h2>Markets this wallet usually plays</h2>
+                <p>Category split is based on event tags first, then title heuristics.</p>
+                <div class="chart-wrap"><canvas id="categoryChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="grid">
+            <div class="panel">
+                <h2>Odds distribution by side and outcome</h2>
+                <p>Two graphs: buys and sells, each split by Yes/No/Other notional in each odds bucket.</p>
+                <div class="chart-wrap"><canvas id="oddsBuyChart"></canvas></div>
+                <div style="height: 14px"></div>
+                <div class="chart-wrap"><canvas id="oddsSellChart"></canvas></div>
+            </div>
+            <div class="panel">
+                <h2>Warnings / caveats</h2>
+                <ul id="warnings" class="warnings"></ul>
+                <div class="footnote">
+                    Public data has limits. Realized/settled PnL and Sharpe are estimates from fetched history and may differ
+                    from full account equity accounting.
+                </div>
+            </div>
+        </div>
+
+        <div class="grid-3">
+            <div class="panel">
+                <h2>Top markets by notional</h2>
+                <div id="topMarketsTable"></div>
+            </div>
+            <div class="panel">
+                <h2>Open positions snapshot</h2>
+                <div id="openPositionsTable"></div>
+            </div>
+            <div class="panel">
+                <h2>API snapshot</h2>
+                <div id="metaTable"></div>
+            </div>
+        </div>
+
+        <div class="panel" style="margin-top: 12px;">
+            <h2>All operations (buy/sell log)</h2>
+            <div class="ops-controls">
+                <label><input id="showAllOps" type="checkbox"> Show all fetched operations</label>
+                <label for="opsLimitSelect">Or show top rows:</label>
+                <select id="opsLimitSelect">
+                    <option value="100">100</option>
+                    <option value="250" selected>250</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                </select>
+                <button id="downloadOpsButton" type="button">Download CSV</button>
+                <span id="opsCountInfo"></span>
+            </div>
+            <div id="operationsTable"></div>
+        </div>
+    </section>
+</div>
+
+<script>
+    const state = { charts: {}, payload: null };
+
+    function formatMoney(value) {
+        if (value === null || value === undefined || Number.isNaN(value)) return '—';
+        const sign = value > 0 ? '' : value < 0 ? '-' : '';
+        return sign + '$' + Math.abs(value).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    }
+
+    function formatNumber(value, digits = 2) {
+        if (value === null || value === undefined || Number.isNaN(value)) return '—';
+        return Number(value).toLocaleString(undefined, { maximumFractionDigits: digits });
+    }
+
+    function formatPercent(value) {
+        if (value === null || value === undefined || Number.isNaN(value)) return '—';
+        return `${Number(value).toFixed(2)}%`;
+    }
+
+    function destroyChart(name) {
+        if (state.charts[name]) {
+            state.charts[name].destroy();
+            delete state.charts[name];
+        }
+    }
+
+    function renderCards(payload) {
+        const summary = payload.summary || {};
+        const cards = [
+            ['Wallet value', formatMoney(payload.currentValue), `${payload.tradeCount || 0} trades analyzed`],
+            ['Buy notional', formatMoney(summary.totalBuyNotional), `Weighted avg odds ${formatNumber(summary.weightedAverageBuyPrice, 4)}`],
+            ['Sell notional', formatMoney(summary.totalSellNotional), `${payload.positionsCount || 0} positions returned`],
+            ['Realized / settled PnL', formatMoney(summary.estimatedRealizedSettledPnl), 'Timeline metric'],
+            ['Open unrealized PnL', formatMoney(summary.estimatedOpenUnrealizedPnl), 'Current mark only'],
+            ['Total estimated PnL', formatMoney(summary.estimatedTotalPnl), 'Realized + unrealized'],
+            ['P&L last 7 days', formatMoney(summary.pnlLast7d), 'Realized / settled only'],
+            ['P&L YTD', formatMoney(summary.pnlYtd), 'Realized / settled only'],
+            ['Resolved hit rate', formatPercent(summary.resolvedMarketHitRate), `${summary.resolvedMarketsCount || 0} resolved markets`],
+            ['Hold to close', formatPercent(summary.holdToCloseRate), 'Resolved markets'],
+            ['Sharpe ratio', formatNumber(summary.sharpeRatio, 3), 'Estimated annualized'],
+            ['Low-odds buy share', formatPercent(summary.lowOddsBuyShare), 'Buys at <= 0.10 odds'],
+            ['Average hold time', summary.averageHoldHours == null ? '—' : `${formatNumber(summary.averageHoldHours, 1)}h`, 'Matched exits + resolved holds'],
+        ];
+        document.getElementById('summaryCards').innerHTML = cards.map(([label, value, sub]) => `
+            <div class="card">
+                <div class="label">${label}</div>
+                <div class="value">${value}</div>
+                <div class="sub">${sub}</div>
+            </div>
+        `).join('');
+    }
+
+    function renderCategoryChart(payload) {
+        destroyChart('category');
+        const rows = (payload.categoryDistribution || []).slice(0, 12);
+        const ctx = document.getElementById('categoryChart');
+        state.charts.category = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: rows.map(row => row.category),
+                datasets: [{
+                    label: 'Buy notional share %',
+                    data: rows.map(row => row.buyShare),
+                    backgroundColor: '#38bdf8',
+                    borderRadius: 6,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { ticks: { color: '#9eb1cc' }, grid: { color: 'rgba(35,56,86,0.32)' } },
+                    y: { ticks: { color: '#9eb1cc' }, grid: { color: 'rgba(35,56,86,0.32)' } },
+                },
+            },
+        });
+    }
+
+    function renderSideOddsChart(canvasId, chartName, rows, title) {
+        destroyChart(chartName);
+        const ctx = document.getElementById(canvasId);
+        state.charts[chartName] = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: rows.map(row => row.bucket),
+                datasets: [
+                    { label: 'Yes', data: rows.map(row => row.yesNotional), backgroundColor: '#22c55e' },
+                    { label: 'No', data: rows.map(row => row.noNotional), backgroundColor: '#f87171' },
+                    { label: 'Other', data: rows.map(row => row.otherNotional), backgroundColor: '#a78bfa' },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: '#9eb1cc' } },
+                    title: { display: true, text: title, color: '#e7edf7' },
+                },
+                scales: {
+                    x: { stacked: true, ticks: { color: '#9eb1cc' }, grid: { display: false } },
+                    y: { stacked: true, ticks: { color: '#9eb1cc' }, grid: { color: 'rgba(35,56,86,0.32)' } },
+                },
+            },
+        });
+    }
+
+    function renderOddsCharts(payload) {
+        const oddsBySide = payload.oddsBySide || {};
+        renderSideOddsChart('oddsBuyChart', 'oddsBuy', oddsBySide.buy || [], 'Buy-side odds notional');
+        renderSideOddsChart('oddsSellChart', 'oddsSell', oddsBySide.sell || [], 'Sell-side odds notional');
+    }
+
+    function renderPnlChart(payload) {
+        destroyChart('pnl');
+        const rows = payload.pnlTimeline || [];
+        document.getElementById('timelineCaption').textContent = rows.length
+            ? `From ${rows[0].date} to ${rows[rows.length - 1].date}. Open unrealized PnL is not embedded in this curve.`
+            : 'No timeline data.';
+        const ctx = document.getElementById('pnlChart');
+        state.charts.pnl = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: rows.map(row => row.date),
+                datasets: [{
+                    label: 'Cumulative PnL',
+                    data: rows.map(row => row.cumulativePnl),
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34,197,94,0.18)',
+                    tension: 0.15,
+                    fill: true,
+                    pointRadius: 0,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { labels: { color: '#9eb1cc' } } },
+                scales: {
+                    x: { ticks: { color: '#9eb1cc', maxTicksLimit: 8 }, grid: { display: false } },
+                    y: { ticks: { color: '#9eb1cc' }, grid: { color: 'rgba(35,56,86,0.32)' } },
+                },
+            },
+        });
+    }
+
+    function renderWarnings(payload) {
+        const warnings = payload.warnings || [];
+        document.getElementById('warnings').innerHTML = warnings.map(text => `<li>${text}</li>`).join('');
+    }
+
+    function renderTable(containerId, columns, rows) {
+        const html = !rows.length ? '<p>No rows to show.</p>' : `
+            <table>
+                <thead><tr>${columns.map(col => `<th>${col.label}</th>`).join('')}</tr></thead>
+                <tbody>
+                    ${rows.map(row => `<tr>${columns.map(col => `<td>${col.render ? col.render(row[col.key], row) : (row[col.key] ?? '—')}</td>`).join('')}</tr>`).join('')}
+                </tbody>
+            </table>
+        `;
+        document.getElementById(containerId).innerHTML = html;
+    }
+
+    function renderFixedTables(payload) {
+        renderTable('topMarketsTable', [
+            { key: 'title', label: 'Market' },
+            { key: 'category', label: 'Category' },
+            { key: 'buyNotional', label: 'Buy $', render: value => formatMoney(value) },
+            { key: 'realizedPnl', label: 'Realized $', render: value => `<span class="${value >= 0 ? 'good' : 'bad'}">${formatMoney(value)}</span>` },
+            { key: 'unrealizedPnl', label: 'Open $', render: value => `<span class="${value >= 0 ? 'good' : 'bad'}">${formatMoney(value)}</span>` },
+        ], (payload.topMarkets || []).slice(0, 10));
+
+        renderTable('openPositionsTable', [
+            { key: 'title', label: 'Market' },
+            { key: 'outcome', label: 'Outcome' },
+            { key: 'size', label: 'Size', render: value => formatNumber(value, 4) },
+            { key: 'avgPrice', label: 'Avg Odds', render: value => formatNumber(value, 4) },
+            { key: 'currentPrice', label: 'Now', render: value => formatNumber(value, 4) },
+            { key: 'unrealizedPnl', label: 'Open PnL', render: value => `<span class="${value >= 0 ? 'good' : 'bad'}">${formatMoney(value)}</span>` },
+        ], (payload.openPositions || []).slice(0, 10));
+
+        renderTable('metaTable', [
+            { key: 'label', label: 'Field' },
+            { key: 'value', label: 'Value' },
+        ], [
+            { label: 'Wallet', value: payload.wallet || '—' },
+            { label: 'Generated at', value: payload.generatedAt || '—' },
+            { label: 'Public trades analyzed', value: payload.tradeCount ?? '—' },
+            { label: 'Current value endpoint', value: formatMoney(payload.currentValue) },
+            { label: 'Current positions returned', value: payload.positionsCount ?? '—' },
+        ]);
+    }
+
+    function renderOperations(payload) {
+        const operations = payload.operations || [];
+        const showAll = document.getElementById('showAllOps').checked;
+        const limit = Number(document.getElementById('opsLimitSelect').value || 250);
+        const rows = showAll ? operations : operations.slice(0, limit);
+        document.getElementById('opsCountInfo').textContent = `Showing ${rows.length} of ${operations.length} operations.`;
+
+        renderTable('operationsTable', [
+            { key: 'date', label: 'Date' },
+            { key: 'side', label: 'Side' },
+            { key: 'outcome', label: 'Outcome' },
+            { key: 'outcomeClass', label: 'Yes/No Class' },
+            { key: 'price', label: 'Price', render: value => formatNumber(value, 4) },
+            { key: 'size', label: 'Size', render: value => formatNumber(value, 4) },
+            { key: 'notional', label: 'Notional', render: value => formatMoney(value) },
+            { key: 'pnl', label: 'P&L', render: value => `<span class="${value >= 0 ? 'good' : 'bad'}">${formatMoney(value)}</span>` },
+            { key: 'result', label: 'Hit/Miss' },
+            { key: 'heldToClose', label: 'Held To Close', render: value => value ? 'Yes' : 'No' },
+            { key: 'title', label: 'Market' },
+        ], rows);
+    }
+
+    function renderPayload(payload) {
+        state.payload = payload;
+        document.getElementById('results').classList.remove('hidden');
+        renderCards(payload);
+        renderCategoryChart(payload);
+        renderOddsCharts(payload);
+        renderPnlChart(payload);
+        renderWarnings(payload);
+        renderFixedTables(payload);
+        renderOperations(payload);
+    }
+
+    function escapeCsv(value) {
+        const text = value == null ? '' : String(value);
+        if (text.includes('"') || text.includes(',') || text.includes('\n')) {
+            return `"${text.replace(/"/g, '""')}"`;
+        }
+        return text;
+    }
+
+    function downloadOperationsCsv() {
+        if (!state.payload || !Array.isArray(state.payload.operations) || !state.payload.operations.length) {
+            const status = document.getElementById('status');
+            status.textContent = 'No operations available to download yet. Run an analysis first.';
+            return;
+        }
+
+        const columns = [
+            'timestamp',
+            'date',
+            'side',
+            'outcome',
+            'outcomeClass',
+            'price',
+            'size',
+            'notional',
+            'pnl',
+            'result',
+            'matchedQty',
+            'remainingQty',
+            'heldToClose',
+            'category',
+            'title',
+            'conditionId',
+            'resolved',
+            'endDate',
+        ];
+
+        const lines = [columns.join(',')];
+        for (const row of state.payload.operations) {
+            lines.push(columns.map(column => escapeCsv(row[column])).join(','));
+        }
+
+        const csvContent = lines.join('\n');
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const wallet = (state.payload.wallet || 'wallet').replace(/[^a-zA-Z0-9]/g, '');
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        link.href = url;
+        link.download = `operations_${wallet}_${timestamp}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    async function analyzeWallet() {
+        const wallet = document.getElementById('walletInput').value.trim();
+        const status = document.getElementById('status');
+        const button = document.getElementById('analyzeButton');
+        const limitRaw = document.getElementById('limitSelect').value || 'all';
+        const limitLabel = limitRaw === 'all' ? 'all available (up to ~4k, API cap)' : limitRaw;
+        if (!wallet) {
+            status.textContent = 'Please enter a wallet address.';
+            return;
+        }
+
+        button.disabled = true;
+        status.textContent = `Fetching ${limitLabel} trades and computing analytics...`;
+        try {
+            const response = await fetch(`/api/analyze?wallet=${encodeURIComponent(wallet)}&limit=${encodeURIComponent(limitRaw)}`);
+            const payload = await response.json();
+            if (!response.ok) {
+                throw new Error(payload.error || 'Unknown error');
+            }
+            renderPayload(payload);
+            status.textContent = `Done. Analyzed ${payload.tradeCount || 0} trades for ${payload.wallet}.`;
+        } catch (error) {
+            status.textContent = `Error: ${error.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    }
+
+    document.getElementById('analyzeButton').addEventListener('click', analyzeWallet);
+    document.getElementById('walletInput').addEventListener('keydown', event => {
+        if (event.key === 'Enter') analyzeWallet();
+    });
+    document.getElementById('showAllOps').addEventListener('change', () => {
+        if (state.payload) renderOperations(state.payload);
+    });
+    document.getElementById('opsLimitSelect').addEventListener('change', () => {
+        if (state.payload) renderOperations(state.payload);
+    });
+    document.getElementById('downloadOpsButton').addEventListener('click', downloadOperationsCsv);
+</script>
+</body>
+</html>
+
